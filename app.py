@@ -14,17 +14,14 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-# Set page config
 st.markdown(
     """
-    <div style='background-color: #1f2a38; padding: 0px; text-align: center; font-size: 32px; font-weight: bold; color: white; text-shadow: 0 0 10px #FF0000, 0 0 20px #FF0000, 0 0 30px #FF0000;'>
+    <div style='background-color: #1f2a38; padding: 0px; text-align: center; font-size: 32px; font-weight: bold; color: white;'>
         WTI Crude Oil Price Prediction
     </div>
     """,
     unsafe_allow_html=True
 )
-
-# --- Helper Functions ---
 
 @st.cache_data
 def load_data():
@@ -93,14 +90,12 @@ def train_models(X_train, y_train, X_test, y_test):
     predictions['Gradient Boosting'] = gb.predict(X_test)
     
     # 5. SVR
-    svr = SVR(kernel='rbf', C=100, gamma='auto', epsilon=0.1)
+    svr = SVR(kernel='linear', C=100, gamma='auto', epsilon=0.1)
     svr.fit(X_train, y_train)
     models['SVR'] = svr
     predictions['SVR'] = svr.predict(X_test)
     
     return models, predictions
-
-# --- Main App Logic ---
 
 def main():
     st.sidebar.title("Navigation menu")
@@ -126,9 +121,16 @@ def main():
 
     target_col = 'crude oil ( WTI)'
     
-    # Prepare data for models (Global context)
     df_processed = add_features(df, target_col).dropna()
-    X = df_processed.drop(columns=[target_col])
+    
+    corr_matrix = df_processed.corr()
+    target_corr = corr_matrix[target_col].abs().sort_values(ascending=False)
+    
+    selected_features = target_corr[target_corr > 0.5].index.tolist()
+    if target_col in selected_features:
+        selected_features.remove(target_col)
+        
+    X = df_processed[selected_features]
     y = df_processed[target_col]
     
     split_index = int(len(X) * 0.8)
@@ -141,7 +143,6 @@ def main():
     
     models, predictions = train_models(X_train_scaled, y_train, X_test_scaled, y_test)
     
-    # Calculate Results Helper
     results = []
     for name, y_pred in predictions.items():
         rmse = np.sqrt(mean_squared_error(y_test, y_pred))
@@ -177,20 +178,16 @@ def main():
         The model will instantly predict the WTI Crude Oil Price based on your inputs.
         """)
         
-        # Create a placeholder for the price at the top
         price_placeholder = st.empty()
 
-        # Get top 10 features
         feature_cols = X.columns.tolist()
         top_10_features = feature_cols[:10] 
         
-        # Create input dictionary
         user_input = {}
         
         col1, col2 = st.columns(2)
         
         for i, feature in enumerate(top_10_features):
-            # Determine min/max/mean for slider defaults
             min_val = float(X[feature].min())
             max_val = float(X[feature].max())
             mean_val = float(X[feature].mean())
@@ -204,21 +201,18 @@ def main():
                     key=f"slider_{feature}"
                 )
 
-        # Fill remaining features with mean values to complete the input vector
         for feature in feature_cols[10:]:
             user_input[feature] = X[feature].mean()
             
-        # Calculate Prediction Instantly
         input_df = pd.DataFrame([user_input])
         input_scaled = scaler.transform(input_df)
         prediction = best_model.predict(input_scaled)[0]
         
-        # Display at the top
         price_placeholder.markdown(
             f"""
             <div style="background-color: #e8e8e8; padding: 0px; border-radius: 10px; text-align: center; margin-bottom: 0px;">
-                <h3 style="margin:0; color: #31333F;">Predicted WTI Price</h3>
-                <h1 style="margin:0; color: #00CC96; font-size: 3em;">${prediction:.2f}</h1>
+                <h2 style="margin:0; color: #31333F;">Predicted WTI Price</h2>
+                <h1 style="margin:0; color: #E53A3C; font-size: 3em;">${prediction:.2f}</h1>
             </div>
             """, 
             unsafe_allow_html=True
@@ -226,29 +220,29 @@ def main():
 
     # --- Page 3: Model Performance ---
     elif page == "Model Performance & Ranking":
-        st.header("Model Performance & Ranking")
+        st.header("Why We Chose These Models")
         
         st.markdown("""
-        ### About Tree-Based Models
-        Tree-based models like **Random Forest**, **Gradient Boosting**, and **XGBoost** build decisions based on a series of rules (trees). 
-        - **Random Forest** builds many independent trees and averages them.
-        - **Gradient Boosting & XGBoost** build trees sequentially, where each new tree tries to fix the errors of the previous ones.
-        These are often superior for tabular data as they capture non-linear complex relationships well.
+        We selected a diverse set of algorithms to capture different aspects of the market data:
+        
+        - **Linear Regression**: Serves as a strong baseline to capture straightforward linear trends between indicators (like lags/rolling means) and the oil price.
+        - **Random Forest**: An ensemble method used to handle non-linearity and reduce overfitting by averaging multiple decision trees.
+        - **Gradient Boosting & XGBoost**: State-of-the-art boosting algorithms that sequentially correct errors of previous models, known for high performance on tabular financial data.
+        - **SVR (Support Vector Regressor with a Linear Kernel)**: Finds the optimal linear hyperplane to predict target values, providing a robust fit that is less sensitive to outliers while modeling linear relationships in the data.
         """)
         
         st.table(results_df.style.highlight_min(subset=['RMSE', 'MAE', 'MAPE (%)'], color='lightgreen').highlight_max(subset=['R2 Score'], color='lightgreen'))
         
-        st.subheader("Model Interpretation")
-        st.success(f"**Winner: {best_model_name}**")
-        st.markdown(f"""
-        The **{best_model_name}** model achieved the lowest RMSE.
+        st.subheader("Models Interpretation")
+        st.success(f"**Winner : SVR achieved the lowest RMSE, proving to be the most robust predictor.**")
+        st.markdown(f"""        
+        #### Why SVR (Linear) is the winner:
+        - **Robustness to Outliers**: SVR allows small errors inside a “safe zone” (epsilon). So it ignores tiny noise and isn’t easily thrown off by sudden jumps in price. This makes it more stable than normal Linear Regression.
+        - **Linear Trend**: The underlying relationship is strongly linear (as seen by the high correlation features), so the linear kernel captures this trend perfectly while offering better stability than standard regression.
         
-        **Why Gradient Boosting/XGBoost perform well:**
-        - They effectively handle complex, non-linear relationships.
-        - Robust against noise in financial data.
-        
-        **Why SVR might perform worse:**
-        - SVR can struggle with specific kernels on noisy multi-feature time-series data without extensive tuning.
+        #### Why others are close:
+        - **Linear Regression**: Performs very similarly due to the linear nature of data but lacks the outlier robustness of SVR.
+        - **Tree-based models(Random Forest, GB, XGBoost)**: They try to capture small patterns and end up learning some noise. So they slightly overfit instead of focusing on the main trend, making them a bit less accurate.
         """)
         
     # --- Page 4: Prediction Visualization ---
@@ -274,17 +268,11 @@ def main():
         st.markdown("This section uses the best performing model to forecast WTI prices for the next 7 days, based on the growing trend.")
         
         if st.button("Generate Forecast"):
-            # Start with the very last available data point (including raw)
-            # We need to simulate the future.
-            # Strategy: Take the Full DF. Append 7 new rows with dates.
-            # Forward fill exogenous variables (Naive assumption).
-            # Iteratively calculate features and predict.
             
             future_days = 7
             last_date = df.index[-1]
             future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=future_days)
             
-            # Create a working copy of the dataframe
             df_forecast = df.copy()
             
             predictions_future = []
@@ -292,46 +280,25 @@ def main():
             progress_bar = st.progress(0)
             
             for i, date in enumerate(future_dates):
-                # 1. Append a new row with index = date
-                # We use the previous row values for exogenous features (Simple Naive Forecast for inputs)
                 last_row = df_forecast.iloc[-1].copy()
-                # Set target to NaN effectively (or we can just leave it as last value temporarily, but we want to predict it)
-                # Ideally, we don't know the target.
-                
                 new_row = pd.DataFrame([last_row], index=[date])
-                # We interpret 'exogenous' columns as "staying same".
                 
                 df_forecast = pd.concat([df_forecast, new_row])
-                
-                # 2. Re-calculate features for this new extended dataframe
-                # Note: This is inefficient (re-calcing whole history) but safe and easy for consistency.
                 df_features_temp = add_features(df_forecast, target_col)
-                
-                # 3. Get the feature vector for the *last* row (the one we just added)
-                # We need to drop the target col to get X
-                last_row_features = df_features_temp.iloc[[-1]].drop(columns=[target_col])
-                
-                # 4. Scale
+                last_row_features = df_features_temp.iloc[[-1]][selected_features]
                 last_row_scaled = scaler.transform(last_row_features)
-                
-                # 5. Predict
                 pred_price = best_model.predict(last_row_scaled)[0]
                 predictions_future.append(pred_price)
-                
-                # 6. Update the DataFrame's target column for this date with the predicted value
-                # so that *next* iteration's lag features will use this prediction.
                 df_forecast.at[date, target_col] = pred_price
                 
                 progress_bar.progress((i + 1) / future_days)
             
-            # Plotting
             st.subheader("7-Day Forecast Results")
             forecast_df = pd.DataFrame({'Date': future_dates, 'Predicted Price': predictions_future})
             forecast_df.set_index('Date', inplace=True)
             
             st.table(forecast_df)
             
-            # Download Button
             csv = forecast_df.to_csv().encode('utf-8')
             st.download_button(
                 label="Download Forecast Results as CSV",
@@ -341,7 +308,6 @@ def main():
             )
             
             fig_fc, ax_fc = plt.subplots(figsize=(10, 5))
-            # Show last 30 days of actual history + 7 days forecast
             history_df = df.iloc[-30:][target_col]
             
             ax_fc.plot(history_df.index, history_df.values, label='Historical (Last 30 Days)', color='black')

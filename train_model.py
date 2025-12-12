@@ -7,7 +7,6 @@ from sklearn.metrics import mean_squared_error, r2_score
 import joblib
 import os
 
-# Configuration
 DATA_FILE = 'dataase.csv'
 MODEL_FILE = 'wti_model.pkl'
 SCALER_FILE = 'wti_scaler.pkl'
@@ -15,7 +14,6 @@ TARGET_COL = 'crude oil ( WTI)'
 
 def load_and_process_data():
     if not os.path.exists(DATA_FILE):
-        # Fallback to xlsx if csv not found
         if os.path.exists('dataase.xlsx'):
             print("Loading from dataase.xlsx...")
             df = pd.read_excel('dataase.xlsx')
@@ -26,10 +24,8 @@ def load_and_process_data():
         print(f"Loading from {DATA_FILE}...")
         df = pd.read_csv(DATA_FILE)
 
-    # Date processing
     df['date'] = pd.to_datetime(df['date'])
     
-    # Clean numeric columns
     numeric_columns = ['DJIA', 'NASDAQ', 'sp500', 'bitcoin', 'gold', 'Silver']
     for col in numeric_columns:
         if df[col].dtype == 'object':
@@ -37,7 +33,6 @@ def load_and_process_data():
 
     df.set_index('date', inplace=True)
     
-    # Handle missing values
     df = df.fillna(method='ffill').fillna(method='bfill')
     
     return df
@@ -58,26 +53,31 @@ def feature_engineering(df):
     # Price change
     df_features['wti_price_change'] = df_features[TARGET_COL].pct_change()
     
-    # Drop NaN created by lags/rolling
     df_features = df_features.dropna()
     
     return df_features
 
 def train_model():
-    # Load Data
     try:
         df = load_and_process_data()
     except FileNotFoundError as e:
         print(e)
         return
 
-    # Feature Engineering
     df_features = feature_engineering(df)
     
-    X = df_features.drop(columns=[TARGET_COL])
+    corr_matrix = df_features.corr()
+    target_corr = corr_matrix[TARGET_COL].abs().sort_values(ascending=False)
+    
+    selected_features = target_corr[target_corr > 0.5].index.tolist()
+    if TARGET_COL in selected_features:
+        selected_features.remove(TARGET_COL)
+        
+    print(f"Selected {len(selected_features)} features with correlation > 0.5: {selected_features}")
+    
+    X = df_features[selected_features]
     y = df_features[TARGET_COL]
     
-    # Split
     split_index = int(len(X) * 0.8)
     X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
     y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
@@ -85,24 +85,17 @@ def train_model():
     print(f"Training set: {X_train.shape[0]} samples")
     print(f"Test set: {X_test.shape[0]} samples")
     
-    # Scale
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    # Train Gradient Boosting (Best Model)
-    print("Training Gradient Boosting Regressor...")
-    gb = GradientBoostingRegressor(
-        n_estimators=100,
-        learning_rate=0.1,
-        max_depth=5,
-        random_state=42
-    )
-    gb.fit(X_train_scaled, y_train)
+    print("Training SVR (Linear)...")
+    from sklearn.svm import SVR
+    model = SVR(kernel='linear', C=100, gamma='auto', epsilon=0.1)
+    model.fit(X_train_scaled, y_train)
     
-    # Evaluate
-    train_pred = gb.predict(X_train_scaled)
-    test_pred = gb.predict(X_test_scaled)
+    train_pred = model.predict(X_train_scaled)
+    test_pred = model.predict(X_test_scaled)
     
     train_r2 = r2_score(y_train, train_pred)
     test_r2 = r2_score(y_test, test_pred)
@@ -112,9 +105,8 @@ def train_model():
     print(f"Test R²: {test_r2:.4f}")
     print(f"Test RMSE: {rmse:.4f}")
     
-    # Save
     print("Saving model and scaler...")
-    joblib.dump(gb, MODEL_FILE)
+    joblib.dump(model, MODEL_FILE)
     joblib.dump(scaler, SCALER_FILE)
     print("Done!")
 
